@@ -10,8 +10,9 @@
 // Создаем базу данных и открываем её
 SQLite::Database db("example.db3", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
 bool inputMode = false;
+bool outputMode = false;
 std::string links, name, surname,linkOfn;
-int main() {
+void main() {
     TgBot::Bot bot("6775048544:AAFaQ-Q8iFalpZoNSzOEeKeGEYDFlEhCVQo");
     std::unordered_set<int> usedJokes; // Используем std::unordered_set для хранения использованных индексов шуток
 
@@ -96,6 +97,18 @@ int main() {
             jokeButton->callbackData = "joke";
             row.push_back(jokeButton);
 
+            //// Кнопка "/input"
+            //TgBot::InlineKeyboardButton::Ptr inputButton(new TgBot::InlineKeyboardButton);
+            //inputButton->text = "/input";
+            //inputButton->callbackData = "input";
+            //row.push_back(inputButton);
+
+            //// Кнопка "/output"
+            //TgBot::InlineKeyboardButton::Ptr outputButton(new TgBot::InlineKeyboardButton);
+            //outputButton->text = "/output";
+            //outputButton->callbackData = "output";
+            //row.push_back(outputButton);
+
             // Добавление строки кнопок в клавиатуру
             keyboard->inlineKeyboard.push_back(row);
 
@@ -179,55 +192,99 @@ int main() {
         }
     });
     bot.getEvents().onCommand("input", [&bot](TgBot::Message::Ptr message) {
+        printf("Received /input command\n");
         int chatId = message->chat->id;
         if (message->text == "/input") {
             inputMode = true;
             bot.getApi().sendMessage(chatId, u8"Введите ссылку на пользователя\
                                                 \n/input <ссылка>");
-    }
-    else if (inputMode) {
-        if (links.empty()) {
-            links = (message->text).erase(0, 7);
+        }
+        else if (inputMode) {
+            if (links.empty()) {
+                links = (message->text).erase(0, 7);
+                linkOfn = "https://vk.com/";
+                for (int i = 0; i < 15; i++) {
+                    if (links[i] != linkOfn[i]) {
+                        bot.getApi().sendMessage(chatId, u8"Извините,но это не ВК ссылка. Перепроверьте вашу ссылку и напишите /input заново");
+                        inputMode = false;
+                        break;
+                    }
+                }
+                SQLite::Statement query(db, "SELECT COUNT(*) FROM person WHERE link = :userId");
+                query.bind(":userId", links);
+                if (query.executeStep()) {
+                    if (query.getColumn(0).getInt() > 0) {
+                        bot.getApi().sendMessage(chatId, u8"Извините,но эта ссылка вк уже добавлена в базу данных.");
+                        inputMode = false;
+                    }
+                }
+                if (inputMode)
+                    bot.getApi().sendMessage(chatId, u8"Введите имя человека\
+                                                    \n/input <имя>");
+                else
+                    links.clear();
+            }   
+            else if (name.empty()) {
+                name = (message->text).erase(0, 7);
+                bot.getApi().sendMessage(chatId, u8"Введите фамилию человека\
+                                                \n/input <фамилия>");
+            }
+            else {
+                surname = (message->text).erase(0,7);
+                SQLite::Statement query(db, "INSERT INTO person (link, name, surname) VALUES (?, ?, ?)");
+                query.bind(1, links);
+                links.clear();
+                query.bind(2, name);
+                name.clear();
+                query.bind(3, surname);
+                surname.clear();
+                query.exec();
+                inputMode = false;
+                printf("Add person\n");
+                bot.getApi().sendMessage(chatId, u8"Спасибо за вашу информацию!");
+            }
+        }
+    });
+    bot.getEvents().onCommand("output", [&bot](TgBot::Message::Ptr message) {
+        printf("Received /output command\n");
+        int chatId = message->chat->id;
+        if (message->text == "/output") {
+            outputMode = true;
+            bot.getApi().sendMessage(chatId, u8"Введите ссылку на человека, о котором вы хотите узнать\
+                                                \n/output <ссылка>");
+        }
+        else if (outputMode) {
+            links = (message->text).erase(0, 8);
             linkOfn = "https://vk.com/";
             for (int i = 0; i < 15; i++) {
                 if (links[i] != linkOfn[i]) {
-                    bot.getApi().sendMessage(chatId, u8"Извините,но это не ВК ссылка. Перепроверьте вашу ссылку и напишите /input заново");
-                    inputMode = false;
+                    bot.getApi().sendMessage(chatId, u8"Извините,но это не ВК ссылка. Перепроверьте вашу ссылку и напишите /output заново");
+                    outputMode = false;
                     break;
                 }
             }
-            SQLite::Statement query(db, "SELECT COUNT(*) FROM person WHERE link = :userId");
+            SQLite::Statement query(db, "SELECT * FROM person WHERE link = :userId");
             query.bind(":userId", links);
             if (query.executeStep()) {
-                if (query.getColumn(0).getInt() > 0) {
-                    bot.getApi().sendMessage(chatId, u8"Извините,но эта ссылка вк уже добавлена в базу данных.");
-                    inputMode = false;
-                }
-            }
-            if (inputMode)
-                bot.getApi().sendMessage(chatId, u8"Введите имя человека\
-                                                \n/input <имя>");
-            else
+                // Получение информации из строки
+                links = query.getColumn(0).getText();
+                name = query.getColumn(1).getText();
+                surname = query.getColumn(2).getText();
+                bot.getApi().sendMessage(chatId, u8"Информация:\
+                                                \nСсылка: " + links + u8"\
+                                                \nИмя: " + name + u8"\
+                                                \nФамилия: " + surname);
                 links.clear();
+                name.clear();
+                surname.clear();
+                outputMode = false;
+            }
+            else {
+                bot.getApi().sendMessage(chatId, u8"Информации о пользователе нет");
+                outputMode = false;
+            }
         }
-        else if (name.empty()) {
-            name = (message->text).erase(0, 7);
-            bot.getApi().sendMessage(chatId, u8"Введите фамилию человека\
-                                                \n/input <фамилия>");
-        }
-        else {
-            surname = (message->text).erase(0,7);
-            SQLite::Statement query(db, "INSERT INTO person (link, name, surname) VALUES (?, ?, ?)");
-            query.bind(1, links);
-            query.bind(2, name);
-            query.bind(3, surname);
-            query.exec();
-            inputMode = false;
-            bot.getApi().sendMessage(chatId, u8"Спасибо за вашу информацию!");
-        }
-    }
-        });
-    
+    });
     try {
         printf("Bot username: %s\n", bot.getApi().getMe()->username.c_str());
         TgBot::TgLongPoll longPoll(bot);
@@ -239,6 +296,4 @@ int main() {
     catch (TgBot::TgException& e) {
         printf("Error: %s\n", e.what());
     }
-
-    return 0;
 }
