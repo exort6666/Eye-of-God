@@ -1,19 +1,43 @@
 #include <stdio.h>
 #define TGBOT_COMPILE_DLL
 #include <tgbot/tgbot.h>
+#define SQLITECPP_COMPILE_DLL
+#include <SQLiteCpp/SQLiteCpp.h>
 #include <cstdlib>
 #include <ctime>
 #include <unordered_set> // Добавляем заголовочный файл для использования std::unordered_set
 
+// Создаем базу данных и открываем её
+SQLite::Database db("example.db3", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+bool inputMode = false;
+std::string links, name, surname,linkOfn;
 int main() {
-    TgBot::Bot bot("Token");
+    TgBot::Bot bot("6775048544:AAFaQ-Q8iFalpZoNSzOEeKeGEYDFlEhCVQo");
     std::unordered_set<int> usedJokes; // Используем std::unordered_set для хранения использованных индексов шуток
 
     // Удаление вебхука, если он установлен
     bot.getApi().deleteWebhook();
 
+
+    // Команда /help
+    bot.getEvents().onCommand("help", [&bot](TgBot::Message::Ptr message) {
+        printf("Received /help command\n");
+    try {
+        bot.getApi().sendMessage(message->chat->id, u8"Доступные команды:\
+                                                           \n/start - Команда для запуск бота.\
+                                                           \n/help - Команда для вывода всех команд.\
+                                                           \n/joke - Команда для получения случайной шутки.\
+                                                           \n/input - Команда для ввода информации о человеке.\
+                                                           \n/output - Команда для поиска и вывода информации из базы данных.");
+    }
+    catch (const TgBot::TgException& e) {
+        printf("Error sending message: %s\n", e.what());
+    }
+        });
+
     // Обработка команды /start (инициализация)
     bot.getEvents().onCommand("start", [&bot](TgBot::Message::Ptr message) {
+        // Добавляем данные
         printf("Received /start command\n");
 
         // Создание инлайн-клавиатуры с кнопкой "Меню"
@@ -32,22 +56,24 @@ int main() {
         // Отправка сообщения с инлайн-клавиатурой
         try {
             bot.getApi().sendMessage(message->chat->id, u8"Привет! Нажмите кнопку ниже для просмотра всех функций.", false, 0, inlineKeyboard);
-        }
-        catch (const TgBot::TgException& e) {
-            printf("Error sending message: %s\n", e.what());
-        }
-        });
 
-    // Команда /help
-    bot.getEvents().onCommand("help", [&bot](TgBot::Message::Ptr message) {
-        printf("Received /help command\n");
-        try {
-            bot.getApi().sendMessage(message->chat->id, "Available commands:\n/start - Start the bot\n/help - Show help\n/joke - Get a random joke");
+            //Запоминаем пользователя в базе данных ЕДИНОЖДЫ
+            SQLite::Statement query(db, "SELECT COUNT(*) FROM users WHERE idTg = :userId");
+            query.bind(":userId", message->chat->id);
+            if (query.executeStep()) {
+                if (query.getColumn(0).getInt() <= 0) {
+                    SQLite::Statement query(db, "INSERT INTO users (idTg) VALUES (?)");
+                    query.bind(1, message->chat->id);
+                    query.exec(); // Выполняем запрос на вставку данных
+                }
+            }
+                
         }
         catch (const TgBot::TgException& e) {
             printf("Error sending message: %s\n", e.what());
         }
-        });
+    });
+
 
     // Обработка нажатия на кнопку "Start" в инлайн-клавиатуре
     bot.getEvents().onCallbackQuery([&bot, &usedJokes](TgBot::CallbackQuery::Ptr query) {
@@ -83,7 +109,12 @@ int main() {
         }
         else if (query->data == "help") {
             try {
-                bot.getApi().sendMessage(query->message->chat->id, u8"Доступные команды:\n/start - Запустить бота\n/help - Показать все функции\n/joke - Получить случайную шутку");
+                bot.getApi().sendMessage(query->message->chat->id, u8"Доступные команды:\
+                                                           \n/start - Команда для запуск бота.\
+                                                           \n/help - Команда для вывода всех команд.\
+                                                           \n/joke - Команда для получения случайной шутки.\
+                                                           \n/input - Команда для ввода информации о человеке.\
+                                                           \n/output - Команда для поиска и вывода информации из базы данных.");
             }
             catch (const TgBot::TgException& e) {
                 printf("Error sending message: %s\n", e.what());
@@ -146,8 +177,57 @@ int main() {
                 printf("Error sending message: %s\n", e.what());
             }
         }
+    });
+    bot.getEvents().onCommand("input", [&bot](TgBot::Message::Ptr message) {
+        int chatId = message->chat->id;
+        if (message->text == "/input") {
+            inputMode = true;
+            bot.getApi().sendMessage(chatId, u8"Введите ссылку на пользователя\
+                                                \n/input <ссылка>");
+    }
+    else if (inputMode) {
+        if (links.empty()) {
+            links = (message->text).erase(0, 7);
+            linkOfn = "https://vk.com/";
+            for (int i = 0; i < 15; i++) {
+                if (links[i] != linkOfn[i]) {
+                    bot.getApi().sendMessage(chatId, u8"Извините,но это не ВК ссылка. Перепроверьте вашу ссылку и напишите /input заново");
+                    inputMode = false;
+                    break;
+                }
+            }
+            SQLite::Statement query(db, "SELECT COUNT(*) FROM person WHERE link = :userId");
+            query.bind(":userId", links);
+            if (query.executeStep()) {
+                if (query.getColumn(0).getInt() > 0) {
+                    bot.getApi().sendMessage(chatId, u8"Извините,но эта ссылка вк уже добавлена в базу данных.");
+                    inputMode = false;
+                }
+            }
+            if (inputMode)
+                bot.getApi().sendMessage(chatId, u8"Введите имя человека\
+                                                \n/input <имя>");
+            else
+                links.clear();
+        }
+        else if (name.empty()) {
+            name = (message->text).erase(0, 7);
+            bot.getApi().sendMessage(chatId, u8"Введите фамилию человека\
+                                                \n/input <фамилия>");
+        }
+        else {
+            surname = (message->text).erase(0,7);
+            SQLite::Statement query(db, "INSERT INTO person (link, name, surname) VALUES (?, ?, ?)");
+            query.bind(1, links);
+            query.bind(2, name);
+            query.bind(3, surname);
+            query.exec();
+            inputMode = false;
+            bot.getApi().sendMessage(chatId, u8"Спасибо за вашу информацию!");
+        }
+    }
         });
-
+    
     try {
         printf("Bot username: %s\n", bot.getApi().getMe()->username.c_str());
         TgBot::TgLongPoll longPoll(bot);
